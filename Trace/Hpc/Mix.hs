@@ -22,16 +22,18 @@ module Trace.Hpc.Mix
         )
   where
 
+import Control.Monad (forM)
 import Data.Maybe (catMaybes)
 import Data.Time (UTCTime)
 import Data.Tree
 import Data.Char
+import System.Directory (doesFileExist)
 
 -- a module index records the attributes of each tick-box that has
 -- been introduced in that module, accessed by tick-number position
 -- in the list
 
-import Trace.Hpc.Util (HpcPos, insideHpcPos, Hash, HpcHash(..), catchIO)
+import Trace.Hpc.Util (HpcPos, insideHpcPos, Hash, HpcHash(..))
 import Trace.Hpc.Tix
 
 -- | 'Mix' is the information about a modules static properties, like
@@ -90,17 +92,20 @@ readMix dirNames mod' = do
    let modName = case mod' of
                     Left str -> str
                     Right tix -> tixModuleName tix
-   res <- sequence [ (do contents <- readFile (mixName dirName modName)
-                         case reads contents of
-                           [(r@(Mix _ _ h _ _),cs)]
-                                | all isSpace cs
-                               && (case mod' of
-                                     Left  _   -> True
-                                     Right tix -> h == tixModuleHash tix
-                                  ) -> return $ Just r
-                           _ -> return $ Nothing) `catchIO` (\ _ -> return $ Nothing)
-                   | dirName <- dirNames
-                   ]
+       moduleHashMatches h =
+         case mod' of
+           Left _ -> True
+           Right tix -> h == tixModuleHash tix
+   res <- forM dirNames $ \dirName -> do
+     let mixFile = mixName dirName modName
+     mixExists <- doesFileExist mixFile
+     if not mixExists then return Nothing
+       else do
+         contents <- readFile (mixName dirName modName)
+         case reads contents of
+           [(r@(Mix _ _ h _ _),cs)]
+             | all isSpace cs && moduleHashMatches h -> return $ Just r
+           _ -> error $ "cannot parse " ++ mixFile
    case catMaybes res of
      [r] -> return r
      xs@(_:_) -> error $ "found " ++ show(length xs) ++ " instances of " ++ modName ++ " in " ++ show dirNames
